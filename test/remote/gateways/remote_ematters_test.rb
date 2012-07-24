@@ -30,6 +30,17 @@ class RemoteEmattersTest < Test::Unit::TestCase
     assert_equal '715', response.message
   end
 
+  def test_authorize_and_capture
+    assert auth = @gateway.authorize(@amount, @credit_card, @options)
+    assert_success auth
+    assert_equal 'Transaction approved.', auth.message
+    assert capture = @gateway.capture(@amount, auth.authorization, @options)
+
+    assert_success capture
+    assert_equal 'Transaction approved.', capture.message
+
+  end
+
   # def test_authorize_and_capture
   #   amount = @amount
   #   assert auth = @gateway.authorize(amount, @credit_card, @options)

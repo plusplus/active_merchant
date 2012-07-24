@@ -69,7 +69,6 @@ module ActiveMerchant #:nodoc:
         post = {}
         add_invoice(post, options)
         add_creditcard(post, creditcard)
-        add_address(post, creditcard, options)
         add_customer_data(post, options)
 
         commit('authonly', money, post)
@@ -79,13 +78,15 @@ module ActiveMerchant #:nodoc:
         post = {}
         add_invoice(post, options)
         add_creditcard(post, creditcard)
-        # add_address(post, creditcard, options)
         add_customer_data(post, options)
 
         commit('sale', money, post)
       end
 
       def capture(money, authorization, options = {})
+        post = {}
+        post[:Trxn] = authorization
+        add_invoice( post, options )
         commit('capture', money, post)
       end
 
@@ -114,12 +115,20 @@ module ActiveMerchant #:nodoc:
 
       def commit(action, money, parameters)
         message = build_message( action, money, parameters )
-        #raise message
-        response = parse(ssl_post(LIVE_URL, message))
+        response = parse(ssl_post(url_for( action ), message))
         Response.new(successful?(response), message_from(response), response,
           :test           => test?,
           :authorization  => response[:emattersMainID]
         )
+      end
+
+      def url_for(action)
+        case action
+        when 'capture'
+          "https://merchant.ematters.com.au/cmaonline.nsf/CompleteTransaction?OpenAgent"
+        else
+          LIVE_URL
+        end
       end
 
       def successful?( response )
@@ -144,6 +153,10 @@ module ActiveMerchant #:nodoc:
           case action
           when 'sale'
             build_payment( xml, money, parameters)
+          when 'authonly'
+            build_payment( xml, money, parameters, "PreAuth")
+          when 'capture'
+            build_capture( xml, money, parameters)
           else
             raise "no action specified for build_request"
           end
@@ -152,7 +165,7 @@ module ActiveMerchant #:nodoc:
         xml.target!
       end
 
-      def build_payment( xml,  money, parameters)
+      def build_payment( xml,  money, parameters, action = nil)
         xml.Name( parameters[:Name] ) unless parameters[:Name].blank?
         xml.Email( parameters[:Email] ) unless parameters[:Email].blank?
         xml.CreditCardHolderName( parameters[:CreditCardHolderName] ) unless parameters[:CreditCardHolderName].blank?
@@ -163,9 +176,15 @@ module ActiveMerchant #:nodoc:
         xml.Category( parameters[:Category] ) unless parameters[:Category].blank?
         xml.IPAddress( parameters[:IPAddress] ) unless parameters[:IPAddress].blank?
         xml.FinalPrice amount(money)
-        xml.Action "Process"
+        xml.Action action || "Process"
       end
 
+      def build_capture( xml,  money, parameters )
+        xml.UID( parameters[:UID] ) unless parameters[:UID].blank?
+        xml.Trxn( parameters[:Trxn] ) unless parameters[:Trxn].blank?
+        xml.CompleteAmount amount(money)
+        xml.Action "Complete"
+      end
 
       def parse(body)
         {}.tap do |hash|
