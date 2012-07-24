@@ -81,6 +81,10 @@ elavon:
   login: LOGIN
   password: PASSWORD
 
+ematters:
+  login: TAS2882
+  password: ABCDEFG
+
 # login: merchant number
 # password: referrer url (for authorize authentication)
 epay:
