@@ -14,7 +14,12 @@ class RemoteEmattersTest < Test::Unit::TestCase
     @declined_card = credit_card('4000300011112220')
 
     @options = {
-      :order_id => rand(3400),
+      :order_id => "#{rand(3400)}",
+    }
+
+    @add_options = {
+      :email => "john@example.com",
+      :name => "John Doe"
     }
   end
 
@@ -38,24 +43,14 @@ class RemoteEmattersTest < Test::Unit::TestCase
 
     assert_success capture
     assert_equal 'Transaction approved.', capture.message
-
   end
 
-  # def test_authorize_and_capture
-  #   amount = @amount
-  #   assert auth = @gateway.authorize(amount, @credit_card, @options)
-  #   assert_success auth
-  #   assert_equal 'Success', auth.message
-  #   assert auth.authorization
-  #   assert capture = @gateway.capture(amount, auth.authorization)
-  #   assert_success capture
-  # end
+  def test_failed_capture
+    assert response = @gateway.capture(@amount, '', @options)
+    assert_failure response
+    assert_equal nil, response.message
+  end
 
-  # def test_failed_capture
-  #   assert response = @gateway.capture(@amount, '')
-  #   assert_failure response
-  #   assert_equal 'REPLACE WITH GATEWAY FAILURE MESSAGE', response.message
-  # end
 
   def test_invalid_login
     gateway = EmattersGateway.new(

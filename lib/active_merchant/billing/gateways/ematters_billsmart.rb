@@ -1,10 +1,12 @@
 module ActiveMerchant #:nodoc:
   module Billing #:nodoc:
-    class EmattersGateway < Gateway
+    class EmattersBillsmartGateway < Gateway
       TEST_URL = 'https://merchant.ematters.com.au/cmaonline.nsf/XML'
       LIVE_URL = 'https://merchant.ematters.com.au/cmaonline.nsf/XML'
       COMPLETE_URL = "https://merchant.ematters.com.au/cmaonline.nsf/CompleteTransaction?OpenAgent"
- 
+      ADD_URL = 'https://merchant.ematters.com.au/billsmart.nsf/Add?OpenAgent'
+      PROCESS_URL = 'https://merchant.ematters.com.au/cmaonline.nsf/BillSmart'
+      DELETE_URL = 'https://merchant.ematters.com.au/billsmart.nsf/Delete?OpenAgent'
       # The countries the gateway supports merchants from as 2 digit ISO country codes
       self.supported_countries = ['AU']
 
@@ -15,7 +17,7 @@ module ActiveMerchant #:nodoc:
       self.homepage_url = 'http://ematters.com.au'
 
       # The name of the gateway
-      self.display_name = 'eMatters'
+      self.display_name = 'eMatters BillSmart'
 
       MESSAGES = {
         "01" => "See card issuer.",
@@ -61,38 +63,11 @@ module ActiveMerchant #:nodoc:
       }
 
       def initialize(options = {})
-        requires!(options, :login, :password)
+        requires!(options, :login, :pin)
         @options = options
         super
       end
 
-      def authorize(money, creditcard, options = {})
-        post = {}
-        add_invoice(post, options)
-        add_creditcard(post, creditcard)
-        add_customer_data(post, options)
-
-        commit('authonly', money, post)
-      end
-
-      def purchase(money, creditcard, options = {})
-        post = {}
-        add_invoice(post, options)
-        add_creditcard(post, creditcard)
-        add_customer_data(post, options)
-
-        commit('sale', money, post)
-      end
-
-      def capture(money, authorization, options = {})
-        post = {}
-        post[:Trxn] = authorization
-        add_invoice( post, options )
-        commit('capture', money, post)
-      end
-
-      # add a new customer CC to your eway account and return unique ManagedCustomerID
-      # supports storing details required by eway see "add_creditcard" and "add_address"
       def store(creditcard, options = {})
         post = {}
         
@@ -100,7 +75,21 @@ module ActiveMerchant #:nodoc:
         add_creditcard(post, creditcard)
         add_customer_data(post, options)
              
-        commit('billsmart_add', nil, post)
+        commit('add', nil, post)
+      end
+
+      def purchase(money, billing_id, options = {})
+        post = {}
+
+        add_invoice(post, options)
+        add_customer_data(post, options.merge( billing_id: billing_id ))
+
+        commit('process', money, post)
+      end
+
+      def delete( billing_id )
+        post = {:CustomerUID => billing_id}
+        commit('delete', nil, post)
       end
 
       private
@@ -109,12 +98,14 @@ module ActiveMerchant #:nodoc:
         post[:Email]     = options[:email] unless options[:email].blank?
         post[:Name]      = options[:name] unless options[:name].blank?
         post[:IPAddress] = options[:ip] unless options[:ip].blank?
-        post[:CustomerUID] = options[:customer_id] unless options[:customer_id].blank?
+        post[:CustomerUID] = options[:billing_id] unless options[:billing_id].blank?
+      end
+
+      def add_address(post, creditcard, options)
       end
 
       def add_invoice(post, options)
-        post[:UID] = options[:order_id]
-        post[:Category] = options[:category] unless options[:category].blank?
+        post[:InvoiceNumber] = options[:order_id]
       end
 
       def add_creditcard(post, creditcard)
@@ -127,7 +118,8 @@ module ActiveMerchant #:nodoc:
 
       def commit(action, money, parameters)
         message = build_message( action, money, parameters )
-        response = parse(ssl_post(url_for( action ), message))
+        #puts "REQUEST: #{message}\n\n"
+        response = parse(action, ssl_post(url_for( action ), message))
         Response.new(successful?(response), message_from(response), response,
           :test           => test?,
           :authorization  => response[:emattersMainID]
@@ -136,22 +128,29 @@ module ActiveMerchant #:nodoc:
 
       def url_for(action)
         case action
-        when 'capture'
-          COMPLETE_URL
+        when 'add'
+          ADD_URL          
+        when 'process'
+          PROCESS_URL
+        when 'delete'
+          DELETE_URL
         else
-          LIVE_URL
+          raise "Don\'t know URL for #{action}"
         end
       end
 
       def successful?( response )
-        response[:emattersRcode] == '08'
+        response[:result] == '01' ||
+        response[:response] == '01' ||
+        response[:emattersrcode] == '08'
       end
 
       def message_from(response)
-        MESSAGES[response[:emattersRcode]] || response[:emattersRcode]
-      end
-
-      def post_data(action, parameters = {})
+        if response[:emattersrcode]
+          MESSAGES[response[:emattersrcode]] || response[:emattersrcode]
+        else
+          response[:text]
+        end
       end
 
       def build_message( action, money, parameters )
@@ -159,16 +158,13 @@ module ActiveMerchant #:nodoc:
         xml.instruct!
 
         xml.tag! 'ematters' do |protocol|
-          xml.readers  @options[:login]
-          xml.password @options[:password]
-
           case action
-          when 'sale'
-            build_payment( xml, money, parameters)
-          when 'authonly'
-            build_payment( xml, money, parameters, "PreAuth")
-          when 'capture'
-            build_capture( xml, money, parameters)
+          when 'add'
+            build_add( xml, parameters)
+          when 'process'
+            build_process( xml, money, parameters)
+          when 'delete'
+            build_delete( xml, parameters )
           else
             raise "no action specified for build_request"
           end
@@ -177,40 +173,56 @@ module ActiveMerchant #:nodoc:
         xml.target!
       end
 
+      def build_add( xml, parameters )
+        xml.Readers @options[:login]
+        xml.CustomerName( parameters[:Name] ) unless parameters[:Name].blank?
+        xml.CustomerEmail( parameters[:Email] ) unless parameters[:Email].blank?
+        build_credit_card( xml, parameters )
+        xml.UID( parameters[:CustomerUID] ) unless parameters[:CustomerUID].blank?
+        xml.Action "Add"        
+      end
+
+      def build_process( xml, money, parameters )
+        xml.MerchantCode @options[:login]
+        xml.CustomerNumber parameters[:CustomerUID]
+        xml.InvoiceNumber parameters[:InvoiceNumber]
+        xml.Amount amount(money)
+        xml.Action "Process"
+      end
+
+      def build_delete( xml, parameters )
+        xml.Readers @options[:login]
+        xml.UID( parameters[:CustomerUID] ) unless parameters[:CustomerUID].blank?
+        xml.PIN @options[:pin]
+        xml.Action "Delete"
+      end
+
       def build_credit_card( xml, parameters )
-        xml.CreditCardHolderName( parameters[:CreditCardHolderName] ) unless parameters[:CreditCardHolderName].blank?
         xml.CreditCardNumber( parameters[:CreditCardNumber] ) unless parameters[:CreditCardNumber].blank?
         xml.CreditCardExpiryMonth( parameters[:CreditCardExpiryMonth] ) unless parameters[:CreditCardExpiryMonth].blank?
         xml.CreditCardExpiryYear( parameters[:CreditCardExpiryYear] ) unless parameters[:CreditCardExpiryYear].blank?
         xml.CVV( parameters[:CVV] ) unless parameters[:CVV].blank?
+        xml.CreditCardHolderName( parameters[:CreditCardHolderName] ) unless parameters[:CreditCardHolderName].blank?
       end
 
-      def build_payment( xml,  money, parameters, action = nil)
-        xml.Name( parameters[:Name] ) unless parameters[:Name].blank?
-        xml.Email( parameters[:Email] ) unless parameters[:Email].blank?
-        build_credit_card( xml, parameters )
-        xml.UID( parameters[:UID] ) unless parameters[:UID].blank?
-        xml.Category( parameters[:Category] ) unless parameters[:Category].blank?
-        xml.IPAddress( parameters[:IPAddress] ) unless parameters[:IPAddress].blank?
-        xml.FinalPrice amount(money)
-        xml.Action action || "Process"
-      end
+      def parse(action, body)
 
-      def build_capture( xml,  money, parameters )
-        xml.UID( parameters[:UID] ) unless parameters[:UID].blank?
-        xml.Trxn( parameters[:Trxn] ) unless parameters[:Trxn].blank?
-        xml.CompleteAmount amount(money)
-        xml.Action "Complete"
-      end
-
-      def parse(body)
+        root_node = case action
+        when 'process'
+          'emattersResponse'
+        else
+          'ematters'
+        end
         {}.tap do |hash|
+          #puts "RESPONSE: #{body}\n\n\n\n"
           xml   = REXML::Document.new(body)
-          root  = REXML::XPath.first(xml.root, '//emattersResponse')
+          root  = REXML::XPath.first(xml.root, "//#{root_node}")
           # we might have gotten an error
           root.to_a.select {|node| node.kind_of? REXML::Element}.each do |element|
-            hash[element.name.to_sym] = element.text
+            hash[element.name.downcase.to_sym] = element.text
           end
+
+          #puts "REsponse HASH = #{hash}"
         end
       end
     end

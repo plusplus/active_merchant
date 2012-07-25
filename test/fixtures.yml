@@ -85,6 +85,11 @@ ematters:
   login: TAS2882
   password: ABCDEFG
 
+ematters_billsmart:
+  login: TAS2882
+  pin: 147305
+
+
 # login: merchant number
 # password: referrer url (for authorize authentication)
 epay:
