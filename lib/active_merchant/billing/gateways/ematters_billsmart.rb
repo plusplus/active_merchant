@@ -79,6 +79,8 @@ module ActiveMerchant #:nodoc:
       end
 
       def purchase(money, billing_id, options = {})
+        requires!(options, :order_id)
+        
         post = {}
 
         add_invoice(post, options)
@@ -118,7 +120,7 @@ module ActiveMerchant #:nodoc:
 
       def commit(action, money, parameters)
         message = build_message( action, money, parameters )
-        #puts "REQUEST: #{message}\n\n"
+        #puts "\n\n--------------------\nREQUEST: #{message}\n\n"
         response = parse(action, ssl_post(url_for( action ), message))
         Response.new(successful?(response), message_from(response), response,
           :test           => test?,
@@ -214,7 +216,7 @@ module ActiveMerchant #:nodoc:
           'ematters'
         end
         {}.tap do |hash|
-          #puts "RESPONSE: #{body}\n\n\n\n"
+          #puts "RESPONSE: #{body}\n--------------------\n\n\n\n"
           xml   = REXML::Document.new(body)
           root  = REXML::XPath.first(xml.root, "//#{root_node}")
           # we might have gotten an error
